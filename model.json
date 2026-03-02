@@ -7,7 +7,7 @@
     "base_duration": 15,
     "barrage_halflife": 120
   },
-  "trainedAt": "2026-03-02T14:35:52.928Z",
+  "trainedAt": "2026-03-02T21:39:48.526Z",
   "conflictWindows": [
     {
       "from": "2025-06-14T23:32:52.000Z",
@@ -39,5 +39,6 @@
       "to": "2026-02-28T17:25:34.000Z",
       "salvos": 60
     }
-  ]
+  ],
+  "avg24hSalvos": 8.222222222222221
 }

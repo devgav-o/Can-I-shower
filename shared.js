@@ -160,6 +160,7 @@ function computeRisk(salvos, windowMin, nowSec, params) {
             lastAlertLocations: last ? Array.from(last.locations) : [],
             salvoCount: salvos.length,
             gapStats: null,
+            avgGapLast10Minutes: null,
             hungerInfo: null,
         };
     }
@@ -178,6 +179,10 @@ function computeRisk(salvos, windowMin, nowSec, params) {
 
     const sorted = [...gaps].sort((a, b) => a - b);
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const last10Gaps = salvos.length >= 10 ? gaps.slice(-9) : gaps;
+    const avgGapLast10Minutes = last10Gaps.length
+        ? last10Gaps.reduce((a, b) => a + b, 0) / last10Gaps.length
+        : null;
     let expectedWait = estimateExpectedWait(salvos, nowSec, windowMin, p);
 
     if (elapsed > 0) {
@@ -212,6 +217,7 @@ function computeRisk(salvos, windowMin, nowSec, params) {
             max: sorted[sorted.length - 1],
             count: gaps.length,
         },
+        avgGapLast10Minutes,
         hungerInfo: { hunger, barrageRisk, barrageWeight, tensionRisk, elapsed, params: p },
     };
 }

@@ -9,7 +9,7 @@ const API_BASE = 'https://agg.rocketalert.live/api/v1/alerts/details';
 const HTTP_TIMEOUT_MS = 30000;
 
 const POP_SIZE = 100;
-const GENERATIONS = 80;
+const GENERATIONS = 10;
 const MUTATION_RATE = 0.35;
 const ELITE_COUNT = 10;
 

@@ -197,6 +197,7 @@ function emptyResponse() {
         lastAlertTime: null, lastAlertLocations: [], salvoCount: 0,
         gapStats: null, trend: 'stable',
         expectedNextAlert: null,
+        avgGapLast10Minutes: null,
         modelType: 'hunger+heuristics',
         hungerInfo: null,
         reasonings: []
@@ -205,6 +206,27 @@ function emptyResponse() {
 
 function clamp01(x) {
     return Math.max(0, Math.min(0.99, x));
+}
+
+// Average salvos per 24h over the history of these salvos, ignoring days with zero (ceasefire days).
+// Used for location-aware 24h activity reasoning (salvos may be location-filtered).
+function avg24hSalvosIgnoringQuietDays(salvos) {
+    if (!salvos.length) return null;
+    const DAY_SEC = 86400;
+    const sorted = [...salvos].sort((a, b) => a.timestamp - b.timestamp);
+    const firstDayStart = Math.floor(sorted[0].timestamp / DAY_SEC) * DAY_SEC;
+    const lastDayEnd = (Math.floor(sorted[sorted.length - 1].timestamp / DAY_SEC) + 1) * DAY_SEC;
+    const dayCounts = [];
+    for (let dayStart = firstDayStart; dayStart < lastDayEnd; dayStart += DAY_SEC) {
+        const dayEnd = dayStart + DAY_SEC;
+        let count = 0;
+        for (const s of sorted) {
+            if (s.timestamp >= dayStart && s.timestamp < dayEnd) count++;
+        }
+        if (count > 0) dayCounts.push(count);
+    }
+    if (!dayCounts.length) return null;
+    return dayCounts.reduce((a, b) => a + b, 0) / dayCounts.length;
 }
 
 
@@ -287,7 +309,41 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec) {
         'Main two-state "hunger" model combining long-term tension build-up with recent barrage intensity.'
     );
 
-    // 2) Muslim prayer time heuristic (user-requested, external knowledge)
+    // 2) 24-hour activity vs baseline for this (possibly location-filtered) history; ignore zero-salvo days
+    (function () {
+        const baseline = avg24hSalvosIgnoringQuietDays(salvos);
+        const count24 = recentSalvoCounts.last24h;
+        if (baseline && baseline > 0) {
+            let standaloneRisk;
+            let qualifier;
+            let extraWeight = 0
+            if (count24 === 0) {
+                standaloneRisk = 0.2;
+                qualifier = 'no alerts in the last 24 hours, quieter than the typical active day';
+            } else {
+                const ratio = count24 / baseline;
+                standaloneRisk = Math.max(0, 1 - ratio);
+
+                if (ratio < 0.5) {
+                    qualifier = `about ${(ratio * 100).toFixed(0)}% of the typical 24h salvo rate for this location`;
+                } else if (ratio < 1.1) {
+                    qualifier = 'roughly in line with the typical 24h number of alerts for this location';
+                } else {
+                    extraWeight = 0.1
+                    qualifier = `well above the typical 24h rate (≈${(ratio * 100).toFixed(0)}%)`;
+                }
+            }
+            addReason(
+                'activity_24h_vs_baseline',
+                '24h activity vs typical',
+                0.3 + extraWeight,
+                standaloneRisk,
+                `There were ${count24} alerts in the last 24 hours; the average is about ${baseline.toFixed(1)}. Current activity is ${qualifier}.`
+            );
+        }
+    })();
+
+    // 3) Muslim prayer time heuristic (user-requested, external knowledge)
     (function () {
         const centers = [
             5 * 60,       // Fajr
@@ -296,6 +352,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec) {
             18 * 60 + 15, // Maghrib
             20 * 60       // Isha
         ];
+        let extraWeight = 0;
         const m = clock.minutesSinceMidnight;
         let minDist = Infinity;
         for (const c of centers) {
@@ -305,10 +362,12 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec) {
         let standaloneRisk;
         let detail;
         if (minDist <= 20) {
-            standaloneRisk = 0;
+            standaloneRisk = minDist/100;
+            extraWeight = 0.2
             detail = 'inside a typical Muslim prayer window';
         } else if (minDist <= 45) {
-            standaloneRisk = 0.5;
+            standaloneRisk = minDist/100;
+            extraWeight = 0.1
             detail = 'near a typical Muslim prayer window';
         } else {
             standaloneRisk = 1;
@@ -318,7 +377,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec) {
         addReason(
             'muslim_prayer_times',
             'Prayer time bias',
-            0.1,
+            0.05 +extraWeight,
             standaloneRisk,
             `Local time in Israel is around ${clock.hour.toString().padStart(2, '0')}:${clock.minute.toString().padStart(2, '0')}, ${detail}, so this heuristic ${direction} the risk when considered on its own.`
         );
@@ -393,6 +452,7 @@ function formatResult(pred, salvos, durationMin, nowSec) {
         gapStats: pred.gapStats,
         trend: computeTrend(gaps.slice(-20)),
         expectedNextAlert: pred.expectedWait,
+        avgGapLast10Minutes: pred.avgGapLast10Minutes,
         modelType: 'hunger+heuristics',
         hungerInfo: pred.hungerInfo,
         reasonings: ensemble.reasonings
