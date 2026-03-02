@@ -42,6 +42,35 @@
       border-radius: 16px;
     }
 
+    /* Debug floating panel (enabled with ?debug=true) */
+    .debug-float {
+      position: fixed; top: 1rem; right: 1rem; z-index: 100;
+      background: rgba(15,12,41,0.95); backdrop-filter: blur(12px);
+      border: 1px solid rgba(99,102,241,0.4); border-radius: 12px;
+      padding: 0.85rem 1rem; font-size: 0.8rem;
+      display: flex; flex-direction: column; gap: 0.5rem; min-width: 220px;
+    }
+    [dir="rtl"] .debug-float { right: auto; left: 1rem; }
+    .debug-float label { color: #94a3b8; font-weight: 600; }
+    .debug-float input[type="datetime-local"] {
+      padding: 0.4rem 0.5rem; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.08);
+      color: #e2e8f0; font-size: 0.85rem;
+    }
+    .debug-float input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+    }
+    .debug-float input[type="datetime-local"]:focus {
+      outline: none; border-color: rgba(99,102,241,0.6);
+    }
+    .debug-float .debug-actions { display: flex; gap: 0.4rem; }
+    .debug-float button {
+      padding: 0.35rem 0.65rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.08); color: #e2e8f0; cursor: pointer; font-size: 0.8rem;
+    }
+    .debug-float button:hover { background: rgba(255,255,255,0.14); }
+    .debug-float button.primary { background: rgba(99,102,241,0.4); border-color: rgba(99,102,241,0.5); }
+
     /* Header */
     header { text-align: center; margin-bottom: 2rem; position: relative; }
     .lang-toggle {
@@ -186,6 +215,13 @@
   <div class="bg-blobs"><span class="b1"></span><span class="b2"></span><span class="b3"></span></div>
 
   <div class="app" v-scope="App()" v-cloak @vue:mounted="init()">
+    <div v-if="isDebug" class="debug-float">
+      <label for="debug-time">Debug: Simulated time</label>
+      <input id="debug-time" type="datetime-local" :value="debugTimeInput" @change="onDebugTimeInput">
+      <div class="debug-actions">
+        <button type="button" class="primary" @click="setDebugNow">Now</button>
+      </div>
+    </div>
     <header>
       <div class="lang-toggle">
         <button :class="{ active: lang === 'he' }" @click="setLang('he')">עב</button>
@@ -370,6 +406,8 @@
         showDropdown: false,
         lastUpdateTime: '–',
         loading: false,
+        isDebug: false,
+        debugTimeInput: '',
         data: {
           risk: 0, isActive: true, minutesSinceLastAlert: null,
           salvoCount: 0, trend: 'stable', expectedNextAlert: null, noData: false
@@ -511,9 +549,26 @@
           localStorage.setItem('selectedLocations', JSON.stringify(this.selectedLocations));
         },
 
+        onDebugTimeInput(e) {
+          this.debugTimeInput = e.target.value || '';
+          this.load();
+        },
+
+        setDebugNow() {
+          var now = new Date();
+          var y = now.getFullYear();
+          var m = String(now.getMonth() + 1).padStart(2, '0');
+          var d = String(now.getDate()).padStart(2, '0');
+          var h = String(now.getHours()).padStart(2, '0');
+          var min = String(now.getMinutes()).padStart(2, '0');
+          this.debugTimeInput = y + '-' + m + '-' + d + 'T' + h + ':' + min;
+          this.load();
+        },
+
         buildUrl() {
           var u = '/api/predict?duration=' + this.duration;
           if (this.selectedLocations.length) u += '&location=' + encodeURIComponent(this.selectedLocations.join('|'));
+          if (this.isDebug && this.debugTimeInput) u += '&debugNow=' + encodeURIComponent(this.debugTimeInput);
           return u;
         },
 
@@ -554,6 +609,15 @@
             var savedLocs = JSON.parse(localStorage.getItem('selectedLocations'));
             if (Array.isArray(savedLocs) && savedLocs.length) this.selectedLocations = savedLocs;
           } catch(e) {}
+
+          // Enable debug mode when ?debug=true (or any ?debug) is present
+          try {
+            var params = new URLSearchParams(window.location.search || '');
+            this.isDebug = params.has('debug') && (params.get('debug') === 'true' || params.get('debug') === '' || params.get('debug') === '1');
+          } catch(e) {
+            this.isDebug = false;
+          }
+
           this.loadLocations();
           this.load();
           this.timer = setInterval(function() { self.load(); }, 30000);
