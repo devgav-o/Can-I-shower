@@ -9,6 +9,7 @@ const API_BASE = 'https://agg.rocketalert.live/api/v1/alerts/details';
 const FETCH_INTERVAL = 5 * 60 * 1000;
 const HISTORY_DAYS = 90;
 const SALVO_WINDOW_SEC = 120;
+const HTTP_TIMEOUT_MS = 25000;
 
 let parsedCache = null;
 let lastFetch = null;
@@ -50,6 +51,8 @@ function fetchAlerts(from, to) {
             });
         });
         req.on('error', reject);
+        const t = setTimeout(() => { req.destroy(); reject(new Error('Request timeout')); }, HTTP_TIMEOUT_MS);
+        req.on('close', () => clearTimeout(t));
         req.end();
     });
 }
@@ -136,6 +139,8 @@ function fetchRealtimeCached() {
             });
         });
         req.on('error', reject);
+        const t = setTimeout(() => { req.destroy(); reject(new Error('Request timeout')); }, HTTP_TIMEOUT_MS);
+        req.on('close', () => clearTimeout(t));
         req.end();
     });
 }
@@ -340,7 +345,24 @@ app.get('/api/predict', (req, res) => {
             };
         }
     }
-    res.json(worstResult || emptyResponse());
+    if (worstResult) return res.json(worstResult);
+    const locationSet = new Set(locations);
+    const matchingSalvos = allActive.filter(s => s.locations && [...s.locations].some(l => locationSet.has(l)));
+    const lastMatch = matchingSalvos.length > 0 ? matchingSalvos[matchingSalvos.length - 1] : null;
+    if (lastMatch) {
+        return res.json({
+            risk: 0.5, level: 'YELLOW',
+            minutesSinceLastAlert: (now - lastMatch.timestamp) / 60,
+            lastAlertTime: lastMatch.timestamp,
+            lastAlertLocations: Array.from(lastMatch.locations || []),
+            salvoCount: 1,
+            gapStats: { mean: 0, median: 0, min: 0 }, trend: 'stable',
+            expectedNextAlert: null,
+            isActive: (now - lastMatch.timestamp) < 86400,
+            noData: true
+        });
+    }
+    res.json({ ...emptyResponse(), noData: true });
 });
 
 app.get('/api/locations', (req, res) => {

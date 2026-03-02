@@ -312,6 +312,7 @@
         source: 'מקור נתונים: ',
         lastUpdate: 'עודכן לאחרונה',
         loading: 'טוען...',
+        noData: 'אין מספיק נתונים להערכת סיכון',
         lessThanMin: 'פחות מדקה',
         minutes: 'דקות',
         hours: 'שעות',
@@ -346,6 +347,7 @@
         source: 'Data source: ',
         lastUpdate: 'Last updated',
         loading: 'Loading...',
+        noData: 'Insufficient data for risk estimate',
         lessThanMin: 'Less than a minute',
         minutes: 'minutes',
         hours: 'hours',
@@ -367,9 +369,10 @@
         locQuery: '',
         showDropdown: false,
         lastUpdateTime: '–',
+        loading: false,
         data: {
           risk: 0, isActive: true, minutesSinceLastAlert: null,
-          salvoCount: 0, trend: 'stable', expectedNextAlert: null
+          salvoCount: 0, trend: 'stable', expectedNextAlert: null, noData: false
         },
         timer: null,
 
@@ -383,6 +386,8 @@
         },
 
         get riskDisplay() {
+          if (this.loading) return '–';
+          if (this.data.noData) return '–';
           if (this.data.minutesSinceLastAlert == null) return '–';
           return Math.round(this.data.risk * 100) + '%';
         },
@@ -392,7 +397,7 @@
         },
 
         get gaugeDash() {
-          if (this.data.minutesSinceLastAlert == null) return '0 ' + this.gaugeArcLen;
+          if (this.loading || this.data.noData || this.data.minutesSinceLastAlert == null) return '0 ' + this.gaugeArcLen;
           var fill = this.gaugeArcLen * Math.min(this.data.risk, 1);
           return fill + ' ' + this.gaugeArcLen;
         },
@@ -402,6 +407,8 @@
         },
 
         get riskLabel() {
+          if (this.loading) return this.t.loading;
+          if (this.data.noData) return this.t.noData;
           if (this.data.minutesSinceLastAlert == null) return this.t.loading;
           var cls = this.riskClass;
           if (cls === 'red') return this.t.riskHigh;
@@ -410,7 +417,7 @@
         },
 
         get riskRec() {
-          if (this.data.minutesSinceLastAlert == null) return '';
+          if (this.loading || this.data.noData || this.data.minutesSinceLastAlert == null) return '';
           var cls = this.riskClass;
           if (cls === 'red') return this.t.recHigh;
           if (cls === 'yellow') return this.t.recMed;
@@ -512,6 +519,7 @@
 
         load() {
           var self = this;
+          self.loading = true;
           fetch(this.buildUrl())
             .then(function(r) {
               self.connected = r.ok;
@@ -522,8 +530,12 @@
                 self.data = d;
                 self.lastUpdateTime = new Date().toLocaleTimeString(self.lang === 'he' ? 'he-IL' : 'en-US');
               }
+              self.loading = false;
             })
-            .catch(function() { self.connected = false; });
+            .catch(function() {
+              self.connected = false;
+              self.loading = false;
+            });
         },
 
         loadLocations() {
