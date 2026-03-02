@@ -125,6 +125,36 @@
       text-align: center;
     }
 
+    .loc-cta {
+      margin-top: 1rem;
+      padding: 0.65rem 1.4rem;
+      border-radius: 999px;
+      border: 1px solid rgba(129,140,248,0.9);
+      background: radial-gradient(circle at 0 0, rgba(129,140,248,0.45), rgba(56,189,248,0.18));
+      color: #e0e7ff;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      box-shadow: 0 10px 26px rgba(15,23,42,0.9);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .loc-cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 32px rgba(15,23,42,1);
+      background: radial-gradient(circle at 0 0, rgba(129,140,248,0.6), rgba(56,189,248,0.24));
+      border-color: rgba(129,140,248,1);
+    }
+
+    .loc-cta span.icon {
+      font-size: 1.05rem;
+    }
+
     /* Controls */
     .controls-card { padding: 1.25rem; margin-bottom: 1.5rem; position: relative; z-index: 10; }
     .control-label { font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.5rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -259,6 +289,15 @@
         </div>
       </div>
       <p class="risk-rec" v-text="riskRec"></p>
+      <button
+        v-if="!selectedLocations.length"
+        type="button"
+        class="loc-cta"
+        @click="focusLocation"
+      >
+        <span class="icon">📍</span>
+        <span v-text="t.locCta"></span>
+      </button>
       <p v-if="viewerText" class="viewer-line" v-text="viewerText"></p>
     </main>
 
@@ -273,7 +312,7 @@
 
       <div class="control-label" v-text="t.locations"></div>
       <div class="loc-input-wrap">
-        <input type="text" class="loc-input" :placeholder="t.locPlaceholder" v-model="locQuery" @input="onLocInput" @focus="onLocFocus" autocomplete="off">
+        <input type="text" class="loc-input" :placeholder="t.locPlaceholder" v-model="locQuery" @input="onLocInput" @focus="onLocFocus" @keydown.enter.prevent="onLocEnter" autocomplete="off">
         <div v-if="showDropdown && filteredLocs.length" class="ac-dropdown">
           <div v-for="loc in filteredLocs" :key="loc" class="ac-item" @click="pickLocation(loc)" v-text="loc"></div>
         </div>
@@ -356,7 +395,8 @@
         days: 'ימים',
         viewersYouAndOne: 'אתם ועוד מישהו אחד מתלבטים אם להירטב.',
         viewersYouAndFew: 'אתם ועוד {n} אנשים על הגדר בין מגבת למים.',
-        viewersYouAndMany: '{n} אנשים נוספים מנסים לתפוס מקלחת בזמן הנכון.'
+        viewersYouAndMany: '{n} אנשים נוספים מנסים לתפוס מקלחת בזמן הנכון.',
+        locCta: 'שפרו את הדיוק על ידי בחירת יישוב'
       },
       en: {
         title: 'Can I Shower?',
@@ -394,7 +434,8 @@
         days: 'days',
         viewersYouAndOne: 'It\'s you and one more person wondering if now is shower o\'clock.',
         viewersYouAndFew: 'You and {n} others are hovering between towel and hot water.',
-        viewersYouAndMany: '{n} more people are trying to catch the perfect shower window.'
+        viewersYouAndMany: '{n} more people are trying to catch the perfect shower window.',
+        locCta: 'Improve accuracy by choosing your location'
       }
     };
 
@@ -554,6 +595,43 @@
         onLocInput() { this.showDropdown = true; },
 
         onLocFocus() { if (this.locQuery) this.showDropdown = true; },
+
+        onLocEnter(e) {
+          e && e.preventDefault && e.preventDefault();
+          var q = (this.locQuery || '').trim();
+          if (!q) return;
+          var filtered = this.filteredLocs;
+          if (filtered.length) {
+            this.pickLocation(filtered[0]);
+            return;
+          }
+          if (!this.allLocations.length) return;
+          var lower = q.toLowerCase();
+          var exact = this.allLocations.find(function(l) { return l.toLowerCase() === lower; });
+          if (exact) {
+            this.pickLocation(exact);
+            return;
+          }
+          var partial = this.allLocations.find(function(l) { return l.toLowerCase().includes(lower); });
+          if (partial) {
+            this.pickLocation(partial);
+          }
+        },
+
+        focusLocation() {
+          var input = document.querySelector('.loc-input');
+          if (!input) return;
+          var wrap = input.closest('.loc-input-wrap') || document.querySelector('.loc-input-wrap');
+          if (wrap && wrap.scrollIntoView) {
+            try {
+              wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch(e) {
+              wrap.scrollIntoView();
+            }
+          }
+          input.focus();
+          this.showDropdown = !!this.locQuery && this.filteredLocs.length > 0;
+        },
 
         pickLocation(loc) {
           if (this.selectedLocations.indexOf(loc) === -1) this.selectedLocations.push(loc);
