@@ -287,7 +287,7 @@ app.get('/api/status', (req, res) => {
 });
 
 function startFetch() {
-  fetchData().catch(() => {});
+  fetchData().catch(console.log);
 }
 
 startFetch();
