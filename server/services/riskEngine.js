@@ -22,6 +22,64 @@ function computeTrend(gaps) {
     return 'stable';
 }
 
+/**
+ * Get the UTC offset in seconds for Asia/Jerusalem at a given unix timestamp.
+ * We call Intl once and parse the result to derive the offset.
+ */
+let _cachedOffsetTs = 0;
+let _cachedOffsetSec = 0;
+const _offsetCacheTTL = 3600; // recalc every hour (covers DST transitions)
+
+function getIsraelOffsetSec(nowSec) {
+    // Cache: offset only changes at DST boundaries (~2x/year), so 1h cache is safe
+    if (Math.abs(nowSec - _cachedOffsetTs) < _offsetCacheTTL) {
+        return _cachedOffsetSec;
+    }
+    const date = new Date(nowSec * 1000);
+    const fmt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Jerusalem',
+        hour12: false,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+    const parts = fmt.formatToParts(date);
+    const get = type => parseInt(parts.find(p => p.type === type).value, 10);
+    const ilYear = get('year');
+    const ilMonth = get('month');
+    const ilDay = get('day');
+    const ilHour = get('hour');
+    const ilMinute = get('minute');
+    // Reconstruct what UTC timestamp would correspond to that wall-clock reading if it were UTC
+    const ilAsUtc = Date.UTC(ilYear, ilMonth - 1, ilDay, ilHour, ilMinute, 0, 0) / 1000;
+    // The offset is the difference
+    const offsetSec = Math.round(ilAsUtc - nowSec);
+    // Round to nearest 15min to avoid sub-minute jitter from formatting
+    _cachedOffsetSec = Math.round(offsetSec / 900) * 900;
+    _cachedOffsetTs = nowSec;
+    return _cachedOffsetSec;
+}
+
+/**
+ * Fast Israel hour extraction using cached offset — no Intl calls per salvo.
+ */
+function fastIsraelHour(tsSec, offsetSec) {
+    const localSec = tsSec + offsetSec;
+    // seconds since midnight in local time
+    const secOfDay = ((localSec % 86400) + 86400) % 86400;
+    return Math.floor(secOfDay / 3600);
+}
+
+/**
+ * Fast Israel day key (YYYY-MM-DD) using cached offset.
+ */
+function fastIsraelDayIndex(tsSec, offsetSec) {
+    // Day index: integer number of days since epoch in local time
+    return Math.floor((tsSec + offsetSec) / 86400);
+}
+
 function getIsraelClock(nowSec) {
     const date = new Date(nowSec * 1000);
     const fmt = new Intl.DateTimeFormat('en-GB', {
@@ -51,6 +109,15 @@ function getIsraelClock(nowSec) {
     };
 }
 
+function getIsraelDayKey(ts) {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jerusalem',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).format(new Date(ts * 1000));
+}
+
 function avg24hSalvosIgnoringQuietDays(salvos) {
     if (!salvos.length) return null;
     const DAY_SEC = 86400;
@@ -66,12 +133,13 @@ function avg24hSalvosIgnoringQuietDays(salvos) {
 }
 
 const DEFAULT_WEIGHTS = {
-    core_hunger_model: 0.4,
+    core_hunger_model: 0.35,
     activity_24h_vs_baseline: 0.15,
     avg_gap_proximity: 0.15,
     weibull_hazard: 0.1,
-    muslim_prayer_times: 0.1,
-    darkness_visibility: 0.1,
+    muslim_prayer_times: 0.08,
+    darkness_visibility: 0.08,
+    time_in_day: 0.09,
 };
 
 function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, precomputedRoundGaps) {
@@ -79,7 +147,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
     const clock = getIsraelClock(nowSec);
     const w = weights || DEFAULT_WEIGHTS;
     const gaps = precomputedRoundGaps || extractRoundGaps(salvos);
-
     const reasonings = [];
 
     const recentSalvoCounts = (() => {
@@ -96,6 +163,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         reasonings.push({ id, label, weight, risk: clamp01(risk), contribution: weight * clamp01(risk), explanation });
     }
 
+    // ── core_hunger_model ──
     addReason(
         'core_hunger_model',
         { en: 'Core statistical model', he: 'מודל סטטיסטי מרכזי' },
@@ -103,6 +171,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         { en: 'Main two-state "hunger" model combining long-term tension build-up with recent barrage intensity.', he: 'מודל "רעב" דו-מצבי המשלב הצטברות מתח ארוכת טווח עם עוצמת מטחים אחרונה.' },
     );
 
+    // ── activity_24h_vs_baseline ──
     (function () {
         const baseline = avg24hSalvosIgnoringQuietDays(salvos);
         const count24 = recentSalvoCounts.last24h;
@@ -141,6 +210,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         }
     })();
 
+    // ── muslim_prayer_times ──
     (function () {
         const centers = [5 * 60, 12 * 60 + 30, 15 * 60 + 45, 18 * 60 + 15, 20 * 60];
         const m = clock.minutesSinceMidnight;
@@ -178,6 +248,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         );
     })();
 
+    // ── darkness_visibility ──
     (function () {
         const h = clock.hour;
         let standaloneRisk;
@@ -207,6 +278,145 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         );
     })();
 
+    // ── time_in_day ──
+    // Fast: uses arithmetic offset instead of Intl per-salvo.
+    // Builds a 24-slot hourly histogram of all salvos on active days in the lookback,
+    // compares the current hour's historical share to the overall average share,
+    // and also checks whether today's activity in this hour is above/below that hour's baseline.
+    (function () {
+        const LOOKBACK_DAYS = 14;
+        const cutoffSec = nowSec - LOOKBACK_DAYS * 86400;
+        const offsetSec = getIsraelOffsetSec(nowSec);
+        const currentHour = fastIsraelHour(nowSec, offsetSec);
+        const todayDayIdx = fastIsraelDayIndex(nowSec, offsetSec);
+
+        // Hourly counts: index 0-23.  Also track per-day to count active days.
+        const hourlyCounts = new Float64Array(24);    // total salvos in each hour across lookback
+        const hourlyActiveDays = new Float64Array(24); // how many distinct days had ≥1 salvo in that hour
+        // We need to track which days contributed to each hour
+        // Use a Set per hour — but 24 sets is fine, the expensive part was Intl calls
+        const daysSeen = Array.from({ length: 24 }, () => new Set());
+        let todayThisHourCount = 0;
+
+        for (let i = salvos.length - 1; i >= 0; i--) {
+            const ts = salvos[i].timestamp;
+            if (ts > nowSec) continue;
+            if (ts < cutoffSec) break; // salvos assumed sorted ascending; once we pass cutoff, done
+            const h = fastIsraelHour(ts, offsetSec);
+            const dayIdx = fastIsraelDayIndex(ts, offsetSec);
+            hourlyCounts[h]++;
+            daysSeen[h].add(dayIdx);
+            if (dayIdx === todayDayIdx && h === currentHour) {
+                todayThisHourCount++;
+            }
+        }
+
+        // If salvos aren't sorted descending (they're ascending), we need to iterate forward from cutoff.
+        // Let's handle both: if we got 0 results going backward, scan forward.
+        // Actually, salvos are typically sorted ascending, so the break above would fire immediately.
+        // Let's just scan forward instead:
+        if (hourlyCounts.reduce((a, b) => a + b, 0) === 0) {
+            todayThisHourCount = 0;
+            for (let i = 0; i < salvos.length; i++) {
+                const ts = salvos[i].timestamp;
+                if (ts > nowSec) break;
+                if (ts < cutoffSec) continue;
+                const h = fastIsraelHour(ts, offsetSec);
+                const dayIdx = fastIsraelDayIndex(ts, offsetSec);
+                hourlyCounts[h]++;
+                daysSeen[h].add(dayIdx);
+                if (dayIdx === todayDayIdx && h === currentHour) {
+                    todayThisHourCount++;
+                }
+            }
+        }
+
+        for (let h = 0; h < 24; h++) {
+            hourlyActiveDays[h] = daysSeen[h].size;
+        }
+
+        // Total salvos across all hours in the lookback
+        let totalSalvos = 0;
+        let totalActiveDays = 0;
+        const allActiveDays = new Set();
+        for (let h = 0; h < 24; h++) {
+            totalSalvos += hourlyCounts[h];
+            for (const d of daysSeen[h]) allActiveDays.add(d);
+        }
+        totalActiveDays = allActiveDays.size;
+
+        if (totalSalvos === 0 && todayThisHourCount === 0) return;
+
+        // Average salvos per active day per hour: hourlyCounts[h] / totalActiveDays
+        // Overall average per hour across all 24 hours: totalSalvos / (totalActiveDays * 24)
+        const activeDays = Math.max(totalActiveDays, 1);
+
+        // How many salvos does this hour get on an average active day?
+        const thisHourAvgPerDay = hourlyCounts[currentHour] / activeDays;
+        // What's the overall average per hour per active day?
+        const overallAvgPerHourPerDay = totalSalvos / (activeDays * 24);
+
+        // Historical hotness: how much busier is this hour than the average hour?
+        // ratio > 1 means this hour is historically busier than average
+        const baselinePerHour = Math.max(overallAvgPerHourPerDay, 0.01);
+        const historicalRatio = thisHourAvgPerDay / baselinePerHour;
+
+        // Current activity: how does today's count in this hour compare to this hour's daily average?
+        const thisHourBaseline = Math.max(thisHourAvgPerDay, 0.1);
+        const todayRatio = todayThisHourCount / thisHourBaseline;
+
+        // Combine: historical hotness (is this hour generally dangerous?) + today's pace in this hour
+        // historicalRatio ~1 means average hour, >1 means hot hour, <1 means quiet hour
+        // todayRatio ~1 means on pace, >1 means busier, <1 means quieter
+        //
+        // Map to risk:
+        //   - If this hour is historically quiet AND today is quiet in it: low risk
+        //   - If this hour is historically hot AND today is on/above pace: high risk
+        //   - Mixed signals: moderate
+        //
+        // historicalComponent: sigmoid-ish mapping of historicalRatio
+        const historicalComponent = clamp01(1 - 1 / (1 + historicalRatio * 0.8));
+        // todayComponent:
+        const todayComponent = clamp01(1 - 1 / (1 + todayRatio * 0.6));
+
+        // Blend: historical pattern matters more (60%) since today might just be starting
+        const standaloneRisk = clamp01(historicalComponent * 0.6 + todayComponent * 0.4);
+
+        // Build explanation
+        const hourStr = `${currentHour.toString().padStart(2, '0')}:00`;
+        const thisHourAvgStr = thisHourAvgPerDay.toFixed(1);
+        const overallAvgStr = overallAvgPerHourPerDay.toFixed(1);
+        const historicalPct = (historicalRatio * 100).toFixed(0);
+
+        let qualifierEn, qualifierHe;
+        if (historicalRatio > 1.5) {
+            if (todayRatio >= 1.0) {
+                qualifierEn = `The ${hourStr} hour is historically one of the busier windows (${historicalPct}% of the hourly average), and today's activity in this hour (${todayThisHourCount}) is at or above the typical rate (${thisHourAvgStr}/day).`;
+                qualifierHe = `השעה ${hourStr} היא היסטורית מהחלונות העמוסים יותר (${historicalPct}% מהממוצע השעתי), והפעילות היום בשעה זו (${todayThisHourCount}) בקצב הטיפוסי או מעליו (${thisHourAvgStr}/יום).`;
+            } else {
+                qualifierEn = `The ${hourStr} hour is historically busy (${historicalPct}% of the hourly average, ~${thisHourAvgStr}/day), but today is quieter so far (${todayThisHourCount}).`;
+                qualifierHe = `השעה ${hourStr} היסטורית עמוסה (${historicalPct}% מהממוצע השעתי, ~${thisHourAvgStr}/יום), אך היום שקט יותר עד כה (${todayThisHourCount}).`;
+            }
+        } else if (historicalRatio < 0.5) {
+            qualifierEn = `The ${hourStr} hour is historically one of the quieter windows (${historicalPct}% of the hourly average, ~${thisHourAvgStr}/day). Today: ${todayThisHourCount} so far.`;
+            qualifierHe = `השעה ${hourStr} היא היסטורית מהחלונות השקטים יותר (${historicalPct}% מהממוצע השעתי, ~${thisHourAvgStr}/יום). היום: ${todayThisHourCount} עד כה.`;
+        } else {
+            qualifierEn = `The ${hourStr} hour has roughly average historical activity (${historicalPct}% of the hourly average, ~${thisHourAvgStr}/day). Today: ${todayThisHourCount} in this hour.`;
+            qualifierHe = `לשעה ${hourStr} פעילות היסטורית ממוצעת בערך (${historicalPct}% מהממוצע השעתי, ~${thisHourAvgStr}/יום). היום: ${todayThisHourCount} בשעה זו.`;
+        }
+
+        addReason(
+            'time_in_day',
+            { en: 'Time-of-day vs history', he: 'שעה ביום מול היסטוריה' },
+            standaloneRisk,
+            {
+                en: `${qualifierEn} Overall hourly average across active days: ~${overallAvgStr}/hour.`,
+                he: `${qualifierHe} ממוצע שעתי כללי בימים פעילים: ~${overallAvgStr}/שעה.`,
+            },
+        );
+    })();
+
+    // ── avg_gap_proximity ──
     (function () {
         if (gaps.length < 2) return;
         const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
@@ -217,7 +427,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         const pct = (ratio * 100).toFixed(0);
         const avgStr = avgGap.toFixed(0);
         const elapsedStr = elapsed.toFixed(0);
-
         let qualifierEn, qualifierHe;
         if (ratio < 0.5) {
             qualifierEn = 'well below the average gap — still early in the typical cycle';
@@ -232,7 +441,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
             qualifierEn = 'past the average gap — overdue compared to historical pattern';
             qualifierHe = 'מעבר למרווח הממוצע — באיחור בהשוואה לתבנית ההיסטורית';
         }
-
         addReason(
             'avg_gap_proximity',
             { en: 'Alert gap proximity', he: 'קרבה למרווח התרעות' },
@@ -244,24 +452,22 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         );
     })();
 
+    // ── weibull_hazard ──
     (function () {
         if (gaps.length < 3) return;
         const lastTs = salvos[salvos.length - 1].timestamp;
         const elapsed = Math.max(0.1, (nowSec - lastTs) / 60);
         const sorted = [...gaps].sort((a, b) => a - b);
         const median = sorted[Math.floor(sorted.length / 2)];
-
         const earlyShape = 0.4;
         const earlyScale = median * 0.1;
         const lateShape = 3.0;
         const lateScale = median * 1.1;
-
         const weibullHazard = (t, k, lam) => (k / lam) * Math.pow(t / lam, k - 1);
         const earlyH = weibullHazard(elapsed, earlyShape, earlyScale);
         const lateH = weibullHazard(elapsed, lateShape, lateScale);
         const combinedH = earlyH + lateH;
         const standaloneRisk = clamp01(1 - Math.exp(-combinedH * 0.3));
-
         let descEn, descHe;
         if (elapsed < median * 0.2) {
             descEn = 'Very shortly after last alert — rapid follow-up salvos are common, elevating short-term hazard.';
@@ -276,7 +482,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
             descEn = 'Well past the typical interval — extended quiet increases the statistical likelihood of an imminent salvo.';
             descHe = 'הרבה מעבר למרווח הטיפוסי — שקט ממושך מגדיל את ההסתברות הסטטיסטית למטח קרוב.';
         }
-
         addReason(
             'weibull_hazard',
             { en: 'Failure-rate hazard model', he: 'מודל קצב כשל סטטיסטי' },
@@ -285,6 +490,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         );
     })();
 
+    // ── normalize & combine ──
     let totalWeight = reasonings.reduce((s, r) => s + r.weight, 0);
     if (totalWeight <= 0) {
         const equal = 1 / (reasonings.length || 1);
@@ -292,7 +498,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
     } else {
         reasonings.forEach(r => { r.weight = r.weight / totalWeight; r.contribution = r.weight * r.risk; });
     }
-
     const combinedRisk = clamp01(reasonings.reduce((s, r) => s + r.contribution, 0));
     return { risk: combinedRisk, reasonings };
 }
@@ -332,7 +537,7 @@ function emptyResponse() {
 
 module.exports = {
     DEFAULT_WEIGHTS,
-    clamp01, getLevel, computeTrend, getIsraelClock,
+    clamp01, getLevel, computeTrend, getIsraelClock, getIsraelDayKey,
     avg24hSalvosIgnoringQuietDays, applyReasoningEnsemble,
     formatResult, emptyResponse,
 };
