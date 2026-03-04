@@ -12,7 +12,7 @@ const translations = {
         locations: 'יישובים',
         locPlaceholder: 'חפשו יישוב...',
         timeSince: 'זמן מהאזעקה האחרונה',
-        avgGapLast10: 'ממוצע רווח התראות אחרונות',
+        avgGapLast10: 'ממוצע רווח התרעות האחרונות',
         alertCount: 'מספר אזעקות',
         trend: 'מגמה',
         trendUp: 'עולה',

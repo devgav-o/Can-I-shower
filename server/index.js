@@ -9,25 +9,33 @@ const { handleStatus } = require('./routes/status');
 
 const PUBLIC_DIR = path.join(__dirname, '../public');
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+};
+
 async function serveStatic(pathname) {
     const filePath = path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname);
     if (!filePath.startsWith(PUBLIC_DIR)) return new Response('Not Found', { status: 404 });
     const file = Bun.file(filePath);
     if (!(await file.exists())) {
         const fallback = Bun.file(path.join(PUBLIC_DIR, 'index.html'));
-        return (await fallback.exists()) ? new Response(fallback) : new Response('Not Found', { status: 404 });
+        return (await fallback.exists()) ? new Response(fallback, { headers: CORS_HEADERS }) : new Response('Not Found', { status: 404 });
     }
-    return new Response(file);
+    return new Response(file, { headers: CORS_HEADERS });
 }
 
 function json(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
     });
 }
 
 async function handleRequest(req) {
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+
     const url = new URL(req.url);
     const { pathname, searchParams } = url;
 

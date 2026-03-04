@@ -1,4 +1,4 @@
-const { computeRisk, extractGaps } = require('../../shared');
+const { extractRoundGaps } = require('../../shared');
 
 function clamp01(x) {
     return Math.max(0, Math.min(0.99, x));
@@ -74,11 +74,11 @@ const DEFAULT_WEIGHTS = {
     darkness_visibility: 0.1,
 };
 
-function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, precomputedGaps) {
+function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, precomputedRoundGaps) {
     const baseRisk = clamp01(pred.risk || 0);
     const clock = getIsraelClock(nowSec);
     const w = weights || DEFAULT_WEIGHTS;
-    const gaps = precomputedGaps || extractGaps(salvos);
+    const gaps = precomputedRoundGaps || extractRoundGaps(salvos);
 
     const reasonings = [];
 
@@ -213,7 +213,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
         const lastTs = salvos[salvos.length - 1].timestamp;
         const elapsed = (nowSec - lastTs) / 60;
         const ratio = elapsed / avgGap;
-        const standaloneRisk = clamp01(ratio);
+        const standaloneRisk = clamp01(ratio * 0.5);
         const pct = (ratio * 100).toFixed(0);
         const avgStr = avgGap.toFixed(0);
         const elapsedStr = elapsed.toFixed(0);
@@ -298,8 +298,8 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, prec
 }
 
 function formatResult(pred, salvos, durationMin, nowSec) {
-    const gaps = extractGaps(salvos);
-    const ensemble = applyReasoningEnsemble(pred, salvos, durationMin, nowSec, undefined, gaps);
+    const roundGaps = extractRoundGaps(salvos);
+    const ensemble = applyReasoningEnsemble(pred, salvos, durationMin, nowSec, undefined, roundGaps);
     return {
         risk: ensemble.risk,
         level: getLevel(ensemble.risk),
@@ -308,7 +308,7 @@ function formatResult(pred, salvos, durationMin, nowSec) {
         lastAlertLocations: pred.lastAlertLocations,
         salvoCount: pred.salvoCount,
         gapStats: pred.gapStats,
-        trend: computeTrend(gaps.slice(-20)),
+        trend: computeTrend(roundGaps.slice(-20)),
         expectedNextAlert: pred.expectedWait,
         avgGapLast10Minutes: pred.avgGapLast10Minutes,
         modelType: 'hunger+heuristics',

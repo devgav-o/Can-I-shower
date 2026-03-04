@@ -206,9 +206,11 @@ function computeRisk(salvos, windowMin, nowSec, params) {
 
     const sorted = [...gaps].sort((a, b) => a - b);
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-    const last10Gaps = salvos.length >= 10 ? gaps.slice(-9) : gaps;
-    const avgGapLast10Minutes = last10Gaps.length
-        ? last10Gaps.reduce((a, b) => a + b, 0) / last10Gaps.length
+    const recentCutoff = nowSec - 7 * DAY_SEC;
+    const recentSalvos = salvos.filter(s => s.timestamp >= recentCutoff);
+    const roundGaps = extractRoundGaps(recentSalvos);
+    const avgGapLast10Minutes = roundGaps.length
+        ? roundGaps.reduce((a, b) => a + b, 0) / roundGaps.length
         : null;
     let expectedWait = estimateExpectedWait(salvos, nowSec, windowMin, p);
 
@@ -223,9 +225,6 @@ function computeRisk(salvos, windowMin, nowSec, params) {
         }
     }
 
-    // If the hunger-based model thinks we're already at \"high risk now\"
-    // (expectedWait === 0) but the final decayed risk is still below 0.5,
-    // suppress the \"High risk in Now\" indicator by treating it as unknown.
     if (expectedWait === 0 && risk < 0.5) {
         expectedWait = null;
     }
@@ -277,8 +276,10 @@ function computeRiskFromState(hungerState, salvos, windowMin, nowSec, params) {
 
     const sorted = [...gaps].sort((a, b) => a - b);
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-    const last10Gaps = salvos.length >= 10 ? gaps.slice(-9) : gaps;
-    const avgGapLast10Minutes = last10Gaps.length ? last10Gaps.reduce((a, b) => a + b, 0) / last10Gaps.length : null;
+    const recentCutoff = nowSec - 7 * DAY_SEC;
+    const recentSalvos = salvos.filter(s => s.timestamp >= recentCutoff);
+    const roundGaps = extractRoundGaps(recentSalvos);
+    const avgGapLast10Minutes = roundGaps.length ? roundGaps.reduce((a, b) => a + b, 0) / roundGaps.length : null;
     let expectedWait = estimateExpectedWait(salvos, nowSec, windowMin, p);
 
     if (elapsed > 0) {
@@ -316,6 +317,22 @@ function extractGaps(salvos) {
     return gaps;
 }
 
+const ROUND_GAP_MIN = 60;
+
+function extractRoundGaps(salvos) {
+    if (salvos.length < 2) return [];
+    const rounds = [salvos[0].timestamp];
+    for (let i = 1; i < salvos.length; i++) {
+        const gap = (salvos[i].timestamp - salvos[i - 1].timestamp) / 60;
+        if (gap >= ROUND_GAP_MIN) rounds.push(salvos[i].timestamp);
+    }
+    const gaps = [];
+    for (let i = 1; i < rounds.length; i++) {
+        gaps.push((rounds[i] - rounds[i - 1]) / 60);
+    }
+    return gaps;
+}
+
 function bsearch(arr, target) {
     let lo = 0, hi = arr.length;
     while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] <= target) lo = m + 1; else hi = m; }
@@ -343,7 +360,7 @@ function parseIsraelTimestamp(dateStr) {
 module.exports = {
     SALVO_WINDOW_SEC, DAY_SEC,
     buildSalvos,
-    computeRisk, computeRiskFromState, extractGaps,
+    computeRisk, computeRiskFromState, extractGaps, extractRoundGaps,
     simulateHunger, simulateHungerState, simulateHungerStateFrom, advanceState, hungerToRisk, estimateExpectedWait,
     DEFAULT_PARAMS,
     bsearch, hasAlertInWindow,

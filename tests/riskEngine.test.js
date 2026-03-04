@@ -14,7 +14,7 @@ const BASE_TS = 1772265600; // 2026-02-28 10:00:00 Israel time (Saturday)
 const MIN = 60;
 const HOUR = 3600;
 
-function makeSalvos(count, startTs, gapSec = 30 * MIN) {
+function makeSalvos(count, startTs, gapSec = 90 * MIN) {
     return Array.from({ length: count }, (_, i) => ({
         timestamp: startTs + i * gapSec,
         locations: new Set(['TestCity']),
@@ -104,7 +104,7 @@ describe('avg24hSalvosIgnoringQuietDays', () => {
 });
 
 describe('applyReasoningEnsemble', () => {
-    const salvos = makeSalvos(10, BASE_TS - 5 * HOUR);
+    const salvos = makeSalvos(10, BASE_TS - 15 * HOUR);
     const pred = computeRisk(salvos, 15, BASE_TS, DEFAULT_PARAMS);
 
     it('returns 6 reasonings', () => {
@@ -181,9 +181,9 @@ describe('applyReasoningEnsemble', () => {
     });
 
     it('avg_gap_proximity risk increases as elapsed approaches the average gap', () => {
-        const earlySalvos = makeSalvos(10, BASE_TS - 5 * HOUR, 30 * MIN);
-        const earlyNow = earlySalvos[earlySalvos.length - 1].timestamp + 5 * MIN;
-        const lateNow = earlySalvos[earlySalvos.length - 1].timestamp + 25 * MIN;
+        const earlySalvos = makeSalvos(10, BASE_TS - 15 * HOUR, 90 * MIN);
+        const earlyNow = earlySalvos[earlySalvos.length - 1].timestamp + 15 * MIN;
+        const lateNow = earlySalvos[earlySalvos.length - 1].timestamp + 80 * MIN;
         const earlyPred = computeRisk(earlySalvos, 15, earlyNow, DEFAULT_PARAMS);
         const latePred = computeRisk(earlySalvos, 15, lateNow, DEFAULT_PARAMS);
         const { reasonings: earlyR } = applyReasoningEnsemble(earlyPred, earlySalvos, 15, earlyNow);
@@ -194,10 +194,10 @@ describe('applyReasoningEnsemble', () => {
     });
 
     it('weibull_hazard has higher risk shortly after alert than in mid-period', () => {
-        const btSalvos = makeSalvos(10, BASE_TS - 5 * HOUR, 30 * MIN);
+        const btSalvos = makeSalvos(10, BASE_TS - 15 * HOUR, 90 * MIN);
         const lastTs = btSalvos[btSalvos.length - 1].timestamp;
         const veryShortAfter = lastTs + 30;
-        const midPeriod = lastTs + 15 * MIN;
+        const midPeriod = lastTs + 45 * MIN;
         const shortPred = computeRisk(btSalvos, 15, veryShortAfter, DEFAULT_PARAMS);
         const midPred = computeRisk(btSalvos, 15, midPeriod, DEFAULT_PARAMS);
         const { reasonings: shortR } = applyReasoningEnsemble(shortPred, btSalvos, 15, veryShortAfter);
@@ -208,10 +208,10 @@ describe('applyReasoningEnsemble', () => {
     });
 
     it('weibull_hazard has higher risk well past median than in mid-period', () => {
-        const btSalvos = makeSalvos(10, BASE_TS - 5 * HOUR, 30 * MIN);
+        const btSalvos = makeSalvos(10, BASE_TS - 15 * HOUR, 90 * MIN);
         const lastTs = btSalvos[btSalvos.length - 1].timestamp;
-        const midPeriod = lastTs + 15 * MIN;
-        const latePeriod = lastTs + 60 * MIN;
+        const midPeriod = lastTs + 45 * MIN;
+        const latePeriod = lastTs + 120 * MIN;
         const midPred = computeRisk(btSalvos, 15, midPeriod, DEFAULT_PARAMS);
         const latePred = computeRisk(btSalvos, 15, latePeriod, DEFAULT_PARAMS);
         const { reasonings: midR } = applyReasoningEnsemble(midPred, btSalvos, 15, midPeriod);
@@ -234,7 +234,7 @@ describe('applyReasoningEnsemble', () => {
 });
 
 describe('formatResult', () => {
-    const salvos = makeSalvos(10, BASE_TS - 5 * HOUR);
+    const salvos = makeSalvos(10, BASE_TS - 15 * HOUR);
     const pred = computeRisk(salvos, 15, BASE_TS, DEFAULT_PARAMS);
 
     it('returns all required fields', () => {
