@@ -50,7 +50,7 @@ describe('parseDebugNow (debug time bug fix)', () => {
 });
 
 describe('/api/daily-risk', () => {
-    it('returns 96 points for a full 24h day (15-min intervals)', async () => {
+    it('returns 97 points for a 24h window (15-min intervals, inclusive)', async () => {
         vi.resetModules();
         vi.mock('../server/services/alertFetcher.js', () => ({
             getParsedCache: () => ({
@@ -60,10 +60,10 @@ describe('/api/daily-risk', () => {
         }));
 
         const { handleDailyRisk } = await import('../server/routes/predict.js');
-        const params = new URLSearchParams({ duration: '15', date: '2026-02-28' });
+        const params = new URLSearchParams({ duration: '15', debugNow: String(BASE_TS) });
         const res = handleDailyRisk(params);
 
-        expect(res.points).toHaveLength(96);
+        expect(res.points).toHaveLength(97);
     });
 
     it('each point has required fields', async () => {
@@ -76,7 +76,7 @@ describe('/api/daily-risk', () => {
         }));
 
         const { handleDailyRisk } = await import('../server/routes/predict.js');
-        const params = new URLSearchParams({ duration: '15', date: '2026-02-28' });
+        const params = new URLSearchParams({ duration: '15', debugNow: String(BASE_TS) });
         const res = handleDailyRisk(params);
 
         for (const point of res.points) {
@@ -90,7 +90,7 @@ describe('/api/daily-risk', () => {
         }
     });
 
-    it('points are in 15-minute increments', async () => {
+    it('points are in 15-minute increments centered on now', async () => {
         vi.resetModules();
         vi.mock('../server/services/alertFetcher.js', () => ({
             getParsedCache: () => ({
@@ -100,16 +100,18 @@ describe('/api/daily-risk', () => {
         }));
 
         const { handleDailyRisk } = await import('../server/routes/predict.js');
-        const params = new URLSearchParams({ duration: '15', date: '2026-02-28' });
+        const params = new URLSearchParams({ duration: '15', debugNow: String(BASE_TS) });
         const res = handleDailyRisk(params);
 
-        expect(res.points[0].minuteOfDay).toBe(0);
-        expect(res.points[1].minuteOfDay).toBe(15);
-        expect(res.points[4].minuteOfDay).toBe(60);
-        expect(res.points[95].minuteOfDay).toBe(1425);
+        for (let i = 1; i < res.points.length; i++) {
+            expect(res.points[i].minuteOfDay - res.points[i - 1].minuteOfDay).toBe(15);
+        }
+        const first = res.points[0].minuteOfDay;
+        const last = res.points[res.points.length - 1].minuteOfDay;
+        expect(last - first).toBe(1440);
     });
 
-    it('returns the requested date in the response', async () => {
+    it('returns today date in the response', async () => {
         vi.resetModules();
         vi.mock('../server/services/alertFetcher.js', () => ({
             getParsedCache: () => ({
@@ -119,7 +121,7 @@ describe('/api/daily-risk', () => {
         }));
 
         const { handleDailyRisk } = await import('../server/routes/predict.js');
-        const params = new URLSearchParams({ duration: '15', date: '2026-02-28' });
+        const params = new URLSearchParams({ duration: '15', debugNow: String(BASE_TS) });
         const res = handleDailyRisk(params);
 
         expect(res.date).toBe('2026-02-28');
@@ -136,7 +138,7 @@ describe('/api/daily-risk', () => {
         }));
 
         const { handleDailyRisk } = await import('../server/routes/predict.js');
-        const params = new URLSearchParams({ duration: '15', date: '2026-02-28' });
+        const params = new URLSearchParams({ duration: '15', debugNow: String(BASE_TS) });
         const res = handleDailyRisk(params);
 
         for (const point of res.points) {
@@ -153,10 +155,10 @@ describe('/api/daily-risk', () => {
         }));
 
         const { handleDailyRisk } = await import('../server/routes/predict.js');
-        const params = new URLSearchParams({ duration: '15', date: '2026-02-28' });
+        const params = new URLSearchParams({ duration: '15', debugNow: String(BASE_TS) });
         const res = handleDailyRisk(params);
 
-        expect(res.points).toHaveLength(96);
+        expect(res.points).toHaveLength(97);
         for (const point of res.points) {
             expect(point.risk).toBe(0);
             expect(point.level).toBe('GREEN');

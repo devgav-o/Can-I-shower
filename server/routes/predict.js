@@ -83,6 +83,13 @@ function handlePredict(searchParams) {
     return result;
 }
 
+function getIsraelMidnight(nowSec) {
+    const clock = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date(nowSec * 1000));
+    return parseIsraelTimestamp(`${clock} 00:00:00`);
+}
+
 function handleDailyRisk(searchParams) {
     const parsed = getParsedCache();
     const allSalvos = parsed.salvos;
@@ -93,20 +100,21 @@ function handleDailyRisk(searchParams) {
 
     const debugNow = parseDebugNow(searchParams.get('debugNow'));
     const nowSec = debugNow ?? Math.floor(Date.now() / 1000);
-    const dateParam = searchParams.get('date');
-    let dayStartSec;
-    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-        dayStartSec = parseIsraelTimestamp(`${dateParam} 00:00:00`);
-    } else {
-        const clock = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
-        }).format(new Date(nowSec * 1000));
-        dayStartSec = parseIsraelTimestamp(`${clock} 00:00:00`);
-    }
-    const dayEndSec = dayStartSec + 86400;
+
+    const todayMidnight = getIsraelMidnight(nowSec);
+    const israelDate = new Date(nowSec * 1000);
+    const israelParts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Jerusalem', hour12: false, hour: '2-digit', minute: '2-digit'
+    }).format(israelDate).split(':');
+    const currentMinuteOfDay = parseInt(israelParts[0], 10) * 60 + parseInt(israelParts[1], 10);
+
+    const windowStartMin = currentMinuteOfDay - 720;
+    const windowEndMin = currentMinuteOfDay + 720;
+    const windowStartSec = todayMidnight + windowStartMin * 60;
+    const windowEndSec = todayMidnight + windowEndMin * 60;
 
     const nowBucket = debugNow != null ? nowSec : Math.floor(nowSec / 30) * 30;
-    const cacheKey = `${dayStartSec}|${locationParam || ''}|${duration}|${nowBucket}`;
+    const cacheKey = `${windowStartSec}|${locationParam || ''}|${duration}|${nowBucket}`;
     const cached = getCached(dailyRiskCache, cacheKey);
     if (cached) return cached;
 
@@ -115,12 +123,13 @@ function handleDailyRisk(searchParams) {
     let salvoIdx = 0;
     let hungerState = null;
 
-    for (let minuteOfDay = 0; minuteOfDay < 1440; minuteOfDay += INTERVAL_MIN) {
-        const pointSec = dayStartSec + minuteOfDay * 60;
+    for (let minuteOfDay = windowStartMin; minuteOfDay <= windowEndMin; minuteOfDay += INTERVAL_MIN) {
+        const pointSec = todayMidnight + minuteOfDay * 60;
         const prevSalvoIdx = salvoIdx;
         while (salvoIdx < allSalvos.length && allSalvos[salvoIdx].timestamp <= pointSec) salvoIdx++;
-        const h = Math.floor(minuteOfDay / 60);
-        const m = minuteOfDay % 60;
+        const displayMin = ((minuteOfDay % 1440) + 1440) % 1440;
+        const h = Math.floor(displayMin / 60);
+        const m = displayMin % 60;
         const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
         if (salvoIdx === 0) {
@@ -156,22 +165,23 @@ function handleDailyRisk(searchParams) {
 
     const date = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
-    }).format(new Date(dayStartSec * 1000));
+    }).format(new Date(todayMidnight * 1000));
 
-    const salvosInDay = allSalvos
-        .filter(s => s.timestamp >= dayStartSec && s.timestamp < dayEndSec)
+    const salvosInWindow = allSalvos
+        .filter(s => s.timestamp >= windowStartSec && s.timestamp < windowEndSec)
         .filter(s => locations.length === 0 || locations.some(loc => s.locations && s.locations.has(loc)))
         .map(s => {
-            const minuteOfDay = Math.floor((s.timestamp - dayStartSec) / 60);
-            const h = Math.floor(minuteOfDay / 60);
-            const m = minuteOfDay % 60;
+            const minuteOfDay = Math.floor((s.timestamp - todayMidnight) / 60);
+            const displayMin = ((minuteOfDay % 1440) + 1440) % 1440;
+            const h = Math.floor(displayMin / 60);
+            const m = displayMin % 60;
             return {
                 time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
                 minuteOfDay,
             };
         });
 
-    const result = { date, duration, points, salvos: salvosInDay };
+    const result = { date, duration, points, salvos: salvosInWindow };
     setCache(dailyRiskCache, cacheKey, result);
     return result;
 }
