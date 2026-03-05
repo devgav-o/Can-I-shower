@@ -1,4 +1,4 @@
-const MAX_DONATIONS = 100;
+const MAX_DONATIONS = 5;
 const store = [];
 let nextId = 1;
 

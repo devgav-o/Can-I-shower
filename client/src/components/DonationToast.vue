@@ -3,12 +3,24 @@ import { pingViewers, fetchDonations } from '@/composables/useApi.js';
 const POLL_INTERVAL_MS = 25000;
 const TOAST_TTL_MS = 6000;
 const NOTE_MAX_LEN = 120;
+const STORAGE_KEY_LAST_SEEN = 'donationToastLastSeenId';
+
+function getStoredLastSeenId() {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY_LAST_SEEN);
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export default {
   name: 'DonationToast',
   data() {
     return {
       toasts: [],
-      lastSeenId: 0,
+      lastSeenId: getStoredLastSeenId(),
       pollTimer: null,
     };
   },
@@ -26,6 +38,11 @@ export default {
       } catch {
         return '';
       }
+    },
+    persistLastSeenId(id) {
+      try {
+        localStorage.setItem(STORAGE_KEY_LAST_SEEN, String(id));
+      } catch (_) {}
     },
     async poll() {
       const viewerId = this.getViewerId();
@@ -49,6 +66,7 @@ export default {
           });
         }
         this.lastSeenId = maxId;
+        this.persistLastSeenId(maxId);
         this.scheduleDismiss();
       } catch (_) {}
     },
